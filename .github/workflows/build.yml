@@ -1,0 +1,475 @@
+name: CabbitBrawl Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create CabbitBrawl
+        run: |
+          mkdir -p CabbitBrawl/server
+          mkdir -p CabbitBrawl/admin
+          mkdir -p CabbitBrawl/client/app/src/main/java/com/cabbitbrawl/app
+          mkdir -p CabbitBrawl/client/app/src/main/res/values
+
+          # =========================
+          # SERVER
+          # =========================
+
+          cat > CabbitBrawl/server/package.json <<'EOF'
+          {
+            "name": "cabbitbrawl-server",
+            "version": "0.1.0",
+            "main": "server.js",
+            "scripts": {
+              "start": "node server.js"
+            },
+            "dependencies": {
+              "express": "^4.21.2"
+            }
+          }
+          EOF
+
+          cat > CabbitBrawl/server/server.js <<'EOF'
+          const express = require("express");
+          const app = express();
+
+          app.use(express.json());
+
+          const players = {};
+
+          const OWNER_KEY = process.env.OWNER_KEY || "CHANGE_THIS_OWNER_KEY";
+
+          app.get("/", (req, res) => {
+            res.json({
+              name: "CabbitBrawl",
+              version: "0.1.0",
+              season: 1,
+              status: "online"
+            });
+          });
+
+          app.get("/api/season", (req, res) => {
+            res.json({
+              id: 1,
+              name: "Season 1",
+              version: "1.0.0"
+            });
+          });
+
+          app.get("/api/player/:id", (req, res) => {
+            const player = players[req.params.id];
+
+            if (!player) {
+              return res.status(404).json({
+                error: "Player not found"
+              });
+            }
+
+            res.json(player);
+          });
+
+          app.post("/api/player", (req, res) => {
+            const id = String(req.body.id || "");
+
+            if (!id) {
+              return res.status(400).json({
+                error: "Missing id"
+              });
+            }
+
+            players[id] = players[id] || {
+              id,
+              nickname: "Player",
+              gems: 0,
+              coins: 0,
+              trophies: 0,
+              brawlers: [],
+              skins: []
+            };
+
+            res.json(players[id]);
+          });
+
+          app.post("/api/admin/give", (req, res) => {
+            if (req.headers["x-owner-key"] !== OWNER_KEY) {
+              return res.status(403).json({
+                error: "Forbidden"
+              });
+            }
+
+            const { id, gems, coins, trophies } = req.body;
+
+            if (!players[id]) {
+              return res.status(404).json({
+                error: "Player not found"
+              });
+            }
+
+            if (gems) players[id].gems += Number(gems);
+            if (coins) players[id].coins += Number(coins);
+            if (trophies) players[id].trophies += Number(trophies);
+
+            res.json({
+              success: true,
+              player: players[id]
+            });
+          });
+
+          app.post("/api/admin/unlock-brawler", (req, res) => {
+            if (req.headers["x-owner-key"] !== OWNER_KEY) {
+              return res.status(403).json({
+                error: "Forbidden"
+              });
+            }
+
+            const { id, brawler } = req.body;
+
+            if (!players[id]) {
+              return res.status(404).json({
+                error: "Player not found"
+              });
+            }
+
+            if (!players[id].brawlers.includes(brawler)) {
+              players[id].brawlers.push(brawler);
+            }
+
+            res.json(players[id]);
+          });
+
+          app.listen(process.env.PORT || 8080, () => {
+            console.log("CabbitBrawl server online");
+          });
+          EOF
+
+          # =========================
+          # ADMIN PANEL
+          # =========================
+
+          cat > CabbitBrawl/admin/index.html <<'EOF'
+          <!DOCTYPE html>
+          <html lang="ru">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <title>CabbitBrawl Admin</title>
+
+            <style>
+              body {
+                font-family: Arial;
+                background:#111;
+                color:white;
+                max-width:700px;
+                margin:auto;
+                padding:25px;
+              }
+
+              input,button {
+                width:100%;
+                padding:14px;
+                margin:6px 0;
+                box-sizing:border-box;
+                border-radius:8px;
+                border:0;
+              }
+
+              button {
+                background:#ffcc00;
+                font-weight:bold;
+              }
+
+              .card {
+                background:#1d1d1d;
+                padding:20px;
+                border-radius:15px;
+                margin-top:15px;
+              }
+            </style>
+          </head>
+
+          <body>
+
+          <h1>🐰 CabbitBrawl</h1>
+          <h2>👑 Owner Panel</h2>
+
+          <div class="card">
+
+            <input id="server" placeholder="Server URL">
+
+            <input id="key" type="password"
+              placeholder="Owner Key">
+
+            <input id="player"
+              placeholder="Player ID">
+
+            <input id="gems"
+              type="number"
+              placeholder="Гемы">
+
+            <input id="coins"
+              type="number"
+              placeholder="Монеты">
+
+            <input id="trophies"
+              type="number"
+              placeholder="Кубки">
+
+            <button onclick="give()">
+              💎 ВЫДАТЬ
+            </button>
+
+          </div>
+
+          <pre id="result"></pre>
+
+          <script>
+          async function give() {
+
+            const server =
+              document.getElementById("server").value;
+
+            const key =
+              document.getElementById("key").value;
+
+            const player =
+              document.getElementById("player").value;
+
+            const gems =
+              Number(document.getElementById("gems").value || 0);
+
+            const coins =
+              Number(document.getElementById("coins").value || 0);
+
+            const trophies =
+              Number(document.getElementById("trophies").value || 0);
+
+            const response = await fetch(
+              server + "/api/admin/give",
+              {
+                method:"POST",
+                headers:{
+                  "Content-Type":"application/json",
+                  "x-owner-key":key
+                },
+                body:JSON.stringify({
+                  id:player,
+                  gems,
+                  coins,
+                  trophies
+                })
+              }
+            );
+
+            document.getElementById("result")
+              .textContent =
+              JSON.stringify(await response.json(),null,2);
+          }
+          </script>
+
+          </body>
+          </html>
+          EOF
+
+          # =========================
+          # ANDROID APP
+          # =========================
+
+          cat > CabbitBrawl/client/settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "CabbitBrawl"
+          include(":app")
+          EOF
+
+          cat > CabbitBrawl/client/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF
+
+          cat > CabbitBrawl/client/app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.cabbitbrawl.app'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'com.cabbitbrawl'
+                  minSdk 23
+                  targetSdk 35
+                  versionCode 1
+                  versionName "0.1.0"
+              }
+          }
+          EOF
+
+          cat > CabbitBrawl/client/app/src/main/res/values/strings.xml <<'EOF'
+          <resources>
+              <string name="app_name">CabbitBrawl</string>
+          </resources>
+          EOF
+
+          cat > CabbitBrawl/client/app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET"/>
+
+              <application
+                  android:theme="@style/AppTheme"
+                  android:label="CabbitBrawl">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+
+                  </activity>
+
+              </application>
+
+          </manifest>
+          EOF
+
+          cat > CabbitBrawl/client/app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+              <style name="AppTheme"
+                  parent="android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:colorAccent">#FFCC00</item>
+              </style>
+          </resources>
+          EOF
+
+          cat > CabbitBrawl/client/app/src/main/java/com/cabbitbrawl/app/MainActivity.java <<'EOF'
+          package com.cabbitbrawl.app;
+
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.graphics.Color;
+          import android.view.Gravity;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+
+          public class MainActivity extends Activity {
+
+              @Override
+              protected void onCreate(Bundle state) {
+                  super.onCreate(state);
+
+                  LinearLayout layout =
+                      new LinearLayout(this);
+
+                  layout.setOrientation(
+                      LinearLayout.VERTICAL
+                  );
+
+                  layout.setGravity(
+                      Gravity.CENTER
+                  );
+
+                  layout.setBackgroundColor(
+                      Color.rgb(18,18,18)
+                  );
+
+                  TextView title =
+                      new TextView(this);
+
+                  title.setText(
+                      "🐰 CABBITBRAWL\n\n" +
+                      "Season 1\n\n" +
+                      "Добро пожаловать!"
+                  );
+
+                  title.setTextColor(Color.WHITE);
+                  title.setTextSize(28);
+                  title.setGravity(Gravity.CENTER);
+
+                  layout.addView(title);
+
+                  setContentView(layout);
+              }
+          }
+          EOF
+
+          # =========================
+          # README
+          # =========================
+
+          cat > CabbitBrawl/README.md <<'EOF'
+          # 🐰 CabbitBrawl
+
+          Personal original multiplayer game project.
+
+          ## Included
+
+          - Android APK
+          - Server
+          - Admin panel
+          - Player system
+          - Gems
+          - Coins
+          - Trophies
+          - Brawlers
+          - Season 1
+
+          ## Owner
+
+          Only requests containing the correct OWNER KEY
+          can use administrative endpoints.
+          EOF
+
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build APK
+        working-directory: CabbitBrawl/client
+        run: |
+          gradle wrapper --gradle-version 8.9
+          ./gradlew assembleDebug
+
+      - name: Package project
+        run: |
+          cp CabbitBrawl/client/app/build/outputs/apk/debug/app-debug.apk \
+             CabbitBrawl/CabbitBrawl.apk
+
+          zip -r CabbitBrawl.zip CabbitBrawl
+
+      - name: Upload CabbitBrawl
+        uses: actions/upload-artifact@v4
+        with:
+          name: CabbitBrawl-v0.1
+          path: CabbitBrawl.zip
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CabbitBrawl-APK
+          path: CabbitBrawl/client/app/build/outputs/apk/debug/app-debug.apk
